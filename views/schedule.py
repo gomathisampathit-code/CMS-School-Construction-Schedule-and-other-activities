@@ -10,6 +10,7 @@ import streamlit as st
 
 import compat
 import db
+import finance
 from gantt import make_chart
 
 if not hasattr(db, "STATUS_OPTIONS"):
@@ -101,6 +102,10 @@ def save(edited, base_rows):
                       (db.iso(row["Actual Start"]), db.iso(row["Actual End"]), status,
                        db.clean_text(row["Remarks"]), int(row["ID"])))
 
+
+st.subheader("🧰 Site engineer's observations")
+for _line in finance.schedule_insights():
+    st.markdown(f"- {_line}")
 
 tabs = st.tabs(db.FLOORS)
 for floor, tab in zip(db.FLOORS, tabs):

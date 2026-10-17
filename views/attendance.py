@@ -1,6 +1,6 @@
 """Page 2 – Site attendance: who is working in the construction today."""
 import sys
-from datetime import date, datetime, time
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,22 +27,6 @@ def workers_df(active_only=True):
         q = "SELECT * FROM workers" + (" WHERE active=1" if active_only else "") + " ORDER BY name"
         return pd.DataFrame([dict(r) for r in c.execute(q).fetchall()],
                             columns=["id", "name", "role", "agency", "phone", "active"])
-
-
-def t(v):
-    """'HH:MM' string -> datetime.time (or None)."""
-    if not v:
-        return None
-    try:
-        return datetime.strptime(v[:5], "%H:%M").time()
-    except ValueError:
-        return None
-
-
-def tstr(v):
-    if v is None or (not isinstance(v, time) and pd.isna(v)):
-        return None
-    return v.strftime("%H:%M") if isinstance(v, time) else str(v)[:5]
 
 
 # ---------------------------------------------------------------- Workers list
@@ -80,11 +64,21 @@ with tab_workers:
                 else:
                     cur = c.execute("INSERT INTO workers (name, role, agency, phone, active) VALUES (?,?,?,?,?)", vals)
                     kept.add(cur.lastrowid)
+            blocked = []
             for wid in set(w["id"].astype(int)) - kept:   # rows deleted in the table
+                has_money = (c.execute("SELECT 1 FROM wage_payments WHERE worker_id=?", (wid,)).fetchone()
+                             or c.execute("SELECT 1 FROM advances WHERE worker_id=?", (wid,)).fetchone())
+                if has_money:
+                    blocked.append(w.loc[w["id"] == wid, "name"].iloc[0])
+                    continue
                 c.execute("DELETE FROM attendance WHERE worker_id=?", (wid,))
                 c.execute("DELETE FROM workers WHERE id=?", (wid,))
+        if blocked:
+            st.warning("Not deleted (wages / advances already recorded in Account): " + ", ".join(blocked)
+                       + ". Untick **Active** instead.")
         st.success("Workers list saved.")
-        st.rerun()
+        if not blocked:
+            st.rerun()
 
 # ---------------------------------------------------------------- Daily attendance
 with tab_today:
@@ -102,15 +96,12 @@ with tab_today:
             s = saved.get(int(r["id"]), {})
             recs.append({"ID": int(r["id"]), "Worker": r["name"], "Role": r["role"], "Agency": r["agency"],
                          "Status": s.get("status", "Absent" if saved else None),
-                         "In": t(s.get("in_time")), "Out": t(s.get("out_time")),
                          "Remarks": s.get("remarks", "")})
         df = pd.DataFrame(recs)
 
         key = f"att_{att_date.isoformat()}"
-        if st.button("Mark everyone present (8:00 – 17:00)"):
+        if st.button("Mark everyone present"):
             df["Status"] = "Present"
-            df["In"] = time(8, 0)
-            df["Out"] = time(17, 0)
             st.session_state.pop(key, None)
             st.session_state["prefill_" + key] = df
         if "prefill_" + key in st.session_state:
@@ -119,11 +110,9 @@ with tab_today:
         edited = compat.data_editor(
             df, key=key + ("_p" if "prefill_" + key in st.session_state else ""), hide_index=True,
             disabled=["ID", "Worker", "Role", "Agency"],
-            column_order=["Worker", "Role", "Agency", "Status", "In", "Out", "Remarks"],
+            column_order=["Worker", "Role", "Agency", "Status", "Remarks"],
             column_config={
                 "Status": st.column_config.SelectboxColumn("Status ✏️", options=STATUSES),
-                "In": st.column_config.TimeColumn("In time ✏️", format="HH:mm", step=60),
-                "Out": st.column_config.TimeColumn("Out time ✏️", format="HH:mm", step=60),
                 "Remarks": st.column_config.TextColumn("Remarks ✏️"),
             },
         )
@@ -136,12 +125,9 @@ with tab_today:
                                   (att_date.isoformat(), int(r["ID"])))
                         continue
                     c.execute(
-                        "INSERT INTO attendance (att_date, worker_id, status, in_time, out_time, remarks) "
-                        "VALUES (?,?,?,?,?,?) ON CONFLICT(att_date, worker_id) DO UPDATE SET "
-                        "status=excluded.status, in_time=excluded.in_time, out_time=excluded.out_time, "
-                        "remarks=excluded.remarks",
-                        (att_date.isoformat(), int(r["ID"]), status, tstr(r["In"]), tstr(r["Out"]),
-                         db.clean_text(r["Remarks"])))
+                        "INSERT INTO attendance (att_date, worker_id, status, remarks) VALUES (?,?,?,?) "
+                        "ON CONFLICT(att_date, worker_id) DO UPDATE SET status=excluded.status, remarks=excluded.remarks",
+                        (att_date.isoformat(), int(r["ID"]), status, db.clean_text(r["Remarks"])))
             st.session_state.pop("prefill_" + key, None)
             st.success("Attendance saved.")
             st.rerun()
@@ -149,7 +135,7 @@ with tab_today:
         # today's summary (from saved data)
         with db.conn() as c:
             summ = pd.DataFrame([dict(r) for r in c.execute(
-                "SELECT w.name, w.role, w.agency, a.status, a.in_time, a.out_time FROM attendance a "
+                "SELECT w.name, w.role, w.agency, a.status FROM attendance a "
                 "JOIN workers w ON w.id=a.worker_id WHERE a.att_date=?", (att_date.isoformat(),)).fetchall()])
         st.divider()
         if summ.empty:
@@ -176,7 +162,7 @@ with tab_history:
     with db.conn() as c:
         hist = pd.DataFrame([dict(r) for r in c.execute(
             "SELECT a.att_date AS Date, w.name AS Worker, w.role AS Role, w.agency AS Agency, a.status AS Status, "
-            "a.in_time AS \"In\", a.out_time AS \"Out\", a.remarks AS Remarks FROM attendance a "
+            "a.remarks AS Remarks FROM attendance a "
             "JOIN workers w ON w.id=a.worker_id WHERE a.att_date BETWEEN ? AND ? ORDER BY a.att_date DESC, w.name",
             (d_from.isoformat(), d_to.isoformat())).fetchall()])
     if hist.empty:
