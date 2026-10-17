@@ -6,6 +6,7 @@ A small site-management app (Streamlit + SQLite) with three pages:
 |---|---|
 | **📅 Schedule** | Ground / First / Second floor activities with **planned** start–end. You enter the **actual** start and end dates. Actual dates and Status are free to enter (end date can be added later); delay in days is calculated. **You choose the status; remarks are for delays and only a reminder is shown. Includes a planned-vs-actual chart. 🟩 = concrete work. |
 | **👷 Attendance** | Pick a date and mark who is working on site today (Present / Half day / Absent / Leave, in & out time). Add people once in *Workers list*. History tab shows days worked and daily headcount. |
+| **💰 Account** *(admin only – Login ID `adminstar`)* | All the money details: **weekly wages every Saturday** from attendance × daily wage (with advances), **purchase expenses filtered by day / week / month / overall / custom dates**, other expenses, funds received & cash in hand, supplier payments and what is still owed, budget vs actual, and **Excel / CSV report downloads**. |
 | **🛒 Purchasing** | Purchase register with item, supplier, quantity, rate, amount, **order date, expected delivery date, received date**, status and bill no. Overdue deliveries are flagged. |
 
 ## Run it in Visual Studio Code
@@ -22,6 +23,21 @@ A small site-management app (Streamlit + SQLite) with three pages:
    ```
 4. The app opens in your browser at http://localhost:8501.
    (Or press **F5** in VS Code and choose *Run CMS Construction App*.)
+
+## Account page (admin)
+
+- Opens only with **Login ID `adminstar`** and password (set in `auth.py`: `ADMIN_ID`, `ADMIN_PASSWORD`).
+- First set each worker's **daily wage** in *Rates & Advances*. Then each Saturday open *Weekly Wages*, pick the Saturday, check the
+  attendance grid, enter any advance to deduct, tick the workers and press **Record payment**.
+- Pay week = Sunday to Saturday. Present = 1 day, Half day = 0.5 day.
+- Download: every table has CSV / Excel buttons; the **Reports** tab gives one Excel file with all sheets.
+
+## Password protection
+
+- The first page asks for a password: **star123**.
+- The password is written in `auth.py` (`PASSWORD = "star123"`). To change it, edit that line and restart the app.
+- Use **🚪 Log out** in the left sidebar.
+- This protects the app screen only. Anyone who can open the project folder can read `auth.py` or copy `cms_construction.db`, so keep the folder on a PC only you control.
 
 ## Notes
 
