@@ -19,6 +19,7 @@ auth.sidebar_logout()
 pages = st.navigation([
     st.Page("views/schedule.py", title="Schedule", icon="📅", default=True),
     st.Page("views/attendance.py", title="Attendance", icon="👷"),
-    st.Page("views/purchasing.py", title="Purchasing", icon="🛒"),
+    st.Page("views/procurement.py", title="Procurement", icon="🛒"),
+    st.Page("views/account.py", title="Account", icon="💰"),
 ])
 pages.run()
