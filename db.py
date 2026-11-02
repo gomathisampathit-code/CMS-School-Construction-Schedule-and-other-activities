@@ -136,6 +136,8 @@ def init_db():
                         " VALUES (?,?,?,?,?,?,?,?)",
                         (floor, i, name, off, dur, ps.isoformat(), pe.isoformat(), _is_concrete(name)))
 
+    _seed_extra_activities()
+
 
 # ---------------------------------------------------------------- helpers
 def to_date(v):
@@ -203,6 +205,57 @@ def delay_days(p_start, p_end, a_start, a_end, status, today=None):
     else:
         d = 0
     return max(d, 0)
+
+
+# Activities added after the first release (inserted once into databases that already exist)
+EXTRA_ACTIVITIES = [
+    ("Ground Floor", "Door and windows fixing", date(2026, 12, 15), date(2026, 12, 20)),
+    ("Ground Floor", "Inner plaster", date(2026, 12, 16), date(2026, 12, 30)),
+]
+
+
+def _insert_activity(c, floor, name, p_start, p_end, is_concrete=None):
+    r = c.execute("SELECT value FROM settings WHERE key=?", (f"floor_start::{floor}",)).fetchone()
+    fs = date.fromisoformat(r["value"]) if r else DEFAULT_FLOOR_START[floor]
+    if is_concrete is None:
+        is_concrete = _is_concrete(name)
+    c.execute(
+        "INSERT INTO activities (floor,seq,name,offset_days,duration_days,planned_start,planned_end,is_concrete)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (floor, 9999, name, (p_start - fs).days, (p_end - p_start).days + 1,
+         p_start.isoformat(), p_end.isoformat(), int(is_concrete)))
+    _resequence(c, floor)
+
+
+def _resequence(c, floor):
+    """Number the activities of a floor in order of planned start date."""
+    ids = [r["id"] for r in c.execute(
+        "SELECT id FROM activities WHERE floor=? ORDER BY planned_start, planned_end, seq, id", (floor,)).fetchall()]
+    for i, aid in enumerate(ids, 1):
+        c.execute("UPDATE activities SET seq=? WHERE id=?", (i, aid))
+
+
+def add_activity(floor, name, p_start, p_end, is_concrete=None):
+    with conn() as c:
+        _insert_activity(c, floor, name.strip(), p_start, p_end, is_concrete)
+
+
+def delete_activity(activity_id):
+    with conn() as c:
+        row = c.execute("SELECT floor FROM activities WHERE id=?", (activity_id,)).fetchone()
+        c.execute("DELETE FROM activities WHERE id=?", (activity_id,))
+        if row:
+            _resequence(c, row["floor"])
+
+
+def _seed_extra_activities():
+    with conn() as c:
+        if c.execute("SELECT 1 FROM settings WHERE key='extra_activities_v1'").fetchone():
+            return
+        for floor, name, ps, pe in EXTRA_ACTIVITIES:
+            if not c.execute("SELECT 1 FROM activities WHERE floor=? AND name=?", (floor, name)).fetchone():
+                _insert_activity(c, floor, name, ps, pe)
+        c.execute("INSERT OR REPLACE INTO settings VALUES ('extra_activities_v1', '1')")
 
 
 def get_floor_start(floor):
