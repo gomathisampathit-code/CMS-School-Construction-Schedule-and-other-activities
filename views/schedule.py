@@ -104,8 +104,12 @@ def save(edited, base_rows):
 
 
 st.subheader("🧰 Site engineer's observations")
-for _line in finance.schedule_insights():
-    st.markdown(f"- {_line}")
+if hasattr(finance, "schedule_insights"):
+    for _line in finance.schedule_insights():
+        st.markdown(f"- {_line}")
+else:
+    st.info("Your `finance.py` is the old version. Replace it with the new `finance.py`, then stop the app (Ctrl+C) "
+            "and run `streamlit run app.py` again.")
 
 tabs = st.tabs(db.FLOORS)
 for floor, tab in zip(db.FLOORS, tabs):
@@ -171,6 +175,34 @@ for floor, tab in zip(db.FLOORS, tabs):
             else:
                 st.pyplot(make_chart(f"CMS School – Barchant : {floor} – {kind} Schedule", crows,
                                      "Green = concrete work · each block = one day"))
+
+        with st.expander("➕ Add / remove an activity"):
+            if not hasattr(db, "add_activity"):
+                st.info("Your `db.py` is the old version – replace it with the new `db.py` and restart the app.")
+            else:
+                st.caption("Add an activity with its planned start and end date. It is placed in date order "
+                           "and you can then enter its actual dates and remarks like the others.")
+                with st.form(f"add_act_{floor}", clear_on_submit=True):
+                    a1, a2, a3 = st.columns([3, 1, 1])
+                    new_name = a1.text_input("Activity name *", key=f"an_{floor}", placeholder="e.g. Flooring")
+                    new_ps = a2.date_input("Planned start", value=end, format="DD/MM/YYYY", key=f"ap_{floor}")
+                    new_pe = a3.date_input("Planned end", value=end, format="DD/MM/YYYY", key=f"ae_{floor}")
+                    new_conc = st.checkbox("This is concrete work (shown in green)", key=f"ac_{floor}")
+                    if st.form_submit_button("Add activity", type="primary"):
+                        if not new_name.strip():
+                            st.error("Enter the activity name.")
+                        elif new_pe < new_ps:
+                            st.error("Planned end cannot be before planned start.")
+                        else:
+                            db.add_activity(floor, new_name, new_ps, new_pe, new_conc or None)
+                            st.success(f"Added: {new_name.strip()}")
+                            st.rerun()
+                opts = {f'{r["seq"]}. {r["name"]}': r["id"] for r in rows}
+                pick = st.selectbox("Remove an activity", ["—"] + list(opts), key=f"rm_{floor}")
+                sure = st.checkbox("Yes, remove it (its actual dates and remarks are deleted too)", key=f"rms_{floor}")
+                if st.button("Remove activity", key=f"rmb_{floor}", disabled=not (sure and pick != "—")):
+                    db.delete_activity(opts[pick])
+                    st.rerun()
 
         with st.expander("⚙️ Change planned floor start date"):
             st.caption("This re-plans the floor: every planned date moves by the same number of days. "
