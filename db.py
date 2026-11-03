@@ -97,15 +97,22 @@ CREATE TABLE IF NOT EXISTS purchases (
 """
 
 
+after_write = None        # set by storage.setup(): called after any change to the database
+
+
 @contextmanager
 def conn():
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
+    before = c.total_changes
     try:
         yield c
         c.commit()
     finally:
+        changed = c.total_changes != before
         c.close()
+        if changed and after_write:
+            after_write()
 
 
 def _is_concrete(name: str) -> int:
