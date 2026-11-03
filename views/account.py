@@ -13,6 +13,7 @@ import auth
 import compat
 import db
 import finance as fin
+import storage
 
 db.init_db()
 auth.require_admin()                       # needs Login ID + password
@@ -573,9 +574,54 @@ def tab_reports():
     st.info("Every tab above also has its own CSV / Excel download buttons under the table.")
 
 
+# ================================================================ 10. Backup & restore
+def tab_backup():
+    st.caption("Your data lives in one database file. Keep a copy safe – especially if the app runs on Streamlit Cloud, "
+               "which erases the app's disk whenever it restarts or sleeps.")
+    st.subheader("☁️ Automatic cloud backup")
+    if storage.enabled():
+        st.success(storage.status_text() or "Cloud backup is on.")
+        if st.button("Back up to cloud now"):
+            if storage.push():
+                st.success("Saved to cloud.")
+            else:
+                st.error(storage.status_text())
+    else:
+        st.error("Cloud backup is OFF. Data entered now will be lost the next time the app restarts.")
+        st.markdown("""
+**Set it up once (about 5 minutes):**
+1. On GitHub create a **new PRIVATE repository**, for example `cms-construction-data`. Tick *Add a README* so it is not empty.
+   Do **not** use the app's own repository (every save would restart the app).
+2. GitHub → Settings → Developer settings → **Fine-grained personal access tokens** → *Generate new token*.
+   Repository access: **only** the data repository. Permissions → **Contents: Read and write**. Copy the token.
+3. Streamlit Cloud → your app → **Manage app → Settings → Secrets**, paste this (with your own values) and save:
+""")
+        st.code('[github_storage]\ntoken  = "github_pat_xxxxxxxx"\nrepo   = "your-username/cms-construction-data"\n'
+                'path   = "cms_construction.db"\nbranch = "main"', language="toml")
+        st.markdown("4. Reboot the app. After that, every save is copied to the private repository, and the data comes "
+                    "back automatically after any restart.")
+    st.divider()
+    st.subheader("💾 Manual backup")
+    st.download_button("⬇️ Download full backup (.db)", storage.backup_bytes(),
+                       file_name=f"cms_construction_backup_{date.today():%Y%m%d}.db",
+                       mime="application/octet-stream", disabled=not db.DB_PATH.exists())
+    st.caption("Download one every Saturday after paying wages. The file contains wages and all site data – keep it private.")
+    st.divider()
+    st.subheader("♻️ Restore from a backup")
+    up = st.file_uploader("Choose a backup file (.db)", type=["db", "sqlite", "sqlite3"], key="restore_file")
+    sure = st.checkbox("I understand this REPLACES all current data with the backup", key="restore_sure")
+    if st.button("Restore now", disabled=not (up and sure), type="primary"):
+        err = storage.restore_from_bytes(up.getvalue())
+        if err:
+            st.error(err)
+        else:
+            st.success("Backup restored.")
+            st.rerun()
+
+
 tabs = st.tabs(["📊 Overview", "💵 Weekly Wages", "🛒 Procurement Expenses", "🧾 Other Expenses",
-                "🏦 Funds & Cash Flow", "🤝 Suppliers", "🎯 Budget", "👷 Rates & Advances", "⬇️ Reports"])
+                "🏦 Funds & Cash Flow", "🤝 Suppliers", "🎯 Budget", "👷 Rates & Advances", "⬇️ Reports", "💾 Backup & Restore"])
 for tab, fn in zip(tabs, [tab_overview, tab_wages, tab_purchases, tab_expenses, tab_funds,
-                          tab_suppliers, tab_budget, tab_rates, tab_reports]):
+                          tab_suppliers, tab_budget, tab_rates, tab_reports, tab_backup]):
     with tab:
         fn()
