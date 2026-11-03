@@ -1,7 +1,7 @@
 """Page 1 – Construction schedule: planned dates, actual dates + status entered freely by the user, delay remarks."""
 import importlib
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -172,12 +172,39 @@ for floor, tab in zip(db.FLOORS, tabs):
         if need:
             st.warning("Delayed – don't forget to add a remark for: " + ", ".join(need))
 
-        with st.expander("📊 Planned vs actual chart (one chart, one block per day)"):
-            st.caption("Each activity has two lanes: **planned** (light, top) and **actual** (solid, below). "
-                       "The red dotted line is today.")
-            st.pyplot(gantt.make_combined_chart(f"CMS School – Barchant : {floor} – Planned vs Actual",
-                                                combined_rows(rows),
-                                                "Green = concrete work · each block = one day", today=TODAY))
+        with st.expander("📊 Planned vs actual chart", expanded=True):
+            st.caption("Light blocks on the top lane = **planned**, solid blocks below = **actual**. Each block is one day. "
+                       "Choose how many days to show and move forward or back.")
+            crows = combined_rows(rows)
+            first_day = min(r["p_start"] for r in crows)
+            last_day = max(max(r["p_end"], r["a_end"] or r["a_start"] or r["p_end"]) for r in crows)
+            span_opt = st.radio("Days to show", ["14 days", "21 days", "28 days", "42 days", "Whole floor"],
+                                index=1, horizontal=True, key=f"span_{floor}")
+            n_days = None if span_opt == "Whole floor" else int(span_opt.split()[0])
+            if n_days is None:
+                w_start, w_end = first_day, last_day
+            else:
+                skey = f"from_{floor}"
+                if skey not in st.session_state:
+                    st.session_state[skey] = min(max(TODAY - timedelta(days=3), first_day),
+                                                 max(last_day - timedelta(days=n_days - 1), first_day))
+
+                def _shift(k, d):
+                    st.session_state[k] = st.session_state[k] + timedelta(days=d)
+
+                b1, b2, b3 = st.columns([1, 1, 2])
+                b1.button("◀ Earlier", key=f"earlier_{floor}", on_click=_shift, args=(skey, -n_days))
+                b2.button("Later ▶", key=f"later_{floor}", on_click=_shift, args=(skey, n_days))
+                b3.date_input("Show from", key=skey, format="DD/MM/YYYY")
+                w_start = st.session_state[skey]
+                w_end = w_start + timedelta(days=n_days - 1)
+            fig = gantt.make_combined_chart(f"CMS School – Barchant : {floor}", crows,
+                                            f"{w_start:%d %b %Y} → {w_end:%d %b %Y}  ·  each block = one day  ·  green = concrete work",
+                                            today=TODAY, start=w_start, end=w_end)
+            if fig is None:
+                st.info("No activities fall in these dates. Use ◀ Earlier / Later ▶ or choose **Whole floor**.")
+            else:
+                st.pyplot(fig)
 
         with st.expander("➕ Add / remove an activity"):
             st.caption("Add an activity with its planned start and end date. It is placed in date order "
