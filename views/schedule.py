@@ -1,4 +1,5 @@
 """Page 1 – Construction schedule: planned dates, actual dates + status entered freely by the user, delay remarks."""
+import importlib
 import sys
 from datetime import date
 from pathlib import Path
@@ -11,12 +12,21 @@ import streamlit as st
 import compat
 import db
 import finance
-from gantt import make_chart
+import gantt
 
-if not hasattr(db, "STATUS_OPTIONS"):
-    st.error("Your `db.py` is the old version. Please replace **both** `db.py` and `views/schedule.py` with the new files, "
-             "then restart the app.")
+# Streamlit can keep an older copy of db.py in memory after the file is replaced - reload it if functions are missing
+if not (hasattr(db, "STATUS_OPTIONS") and hasattr(db, "add_activity")):
+    importlib.reload(db)
+if not (hasattr(db, "STATUS_OPTIONS") and hasattr(db, "add_activity")):
+    st.error("The `db.py` that the app is loading is the OLD version.\n\n"
+             f"File in use: `{getattr(db, '__file__', '?')}`\n\n"
+             "Open that exact file and check it contains `def add_activity`. If not, replace it with the new `db.py`, "
+             "then stop the app (Ctrl+C) and run `streamlit run app.py` again. "
+             "On Streamlit Cloud: commit `db.py` to GitHub, then Manage app → Reboot app.")
     st.stop()
+
+if not hasattr(gantt, "make_combined_chart"):
+    importlib.reload(gantt)
 
 db.init_db()
 TODAY = date.today()
@@ -54,18 +64,13 @@ def build_frame(rows):
     return df
 
 
-def chart_rows(rows, kind):
+def combined_rows(rows):
     out = []
     for r in rows:
-        ps, pe = db.to_date(r["planned_start"]), db.to_date(r["planned_end"])
-        a_s, a_e = db.to_date(r["actual_start"]), db.to_date(r["actual_end"])
-        label = f'{r["seq"]}. {r["name"]}'
-        if kind == "Planned":
-            out.append({"label": label, "start": ps, "end": pe, "concrete": bool(r["is_concrete"])})
-        elif a_s:
-            end = a_e or max(TODAY, a_s)
-            out.append({"label": label, "start": a_s, "end": max(end, a_s), "concrete": bool(r["is_concrete"]),
-                        "suffix": "" if a_e else "  – in progress"})
+        out.append({"label": f'{r["seq"]}. {r["name"]}',
+                    "p_start": db.to_date(r["planned_start"]), "p_end": db.to_date(r["planned_end"]),
+                    "a_start": db.to_date(r["actual_start"]), "a_end": db.to_date(r["actual_end"]),
+                    "concrete": bool(r["is_concrete"])})
     return out
 
 
@@ -167,42 +172,37 @@ for floor, tab in zip(db.FLOORS, tabs):
         if need:
             st.warning("Delayed – don't forget to add a remark for: " + ", ".join(need))
 
-        with st.expander("📊 Bar chart (one block per day)"):
-            kind = st.radio("Show", ["Planned", "Actual"], horizontal=True, key=f"kind_{floor}")
-            crows = chart_rows(rows, kind)
-            if not crows:
-                st.info("No actual start dates entered yet.")
-            else:
-                st.pyplot(make_chart(f"CMS School – Barchant : {floor} – {kind} Schedule", crows,
-                                     "Green = concrete work · each block = one day"))
+        with st.expander("📊 Planned vs actual chart (one chart, one block per day)"):
+            st.caption("Each activity has two lanes: **planned** (light, top) and **actual** (solid, below). "
+                       "The red dotted line is today.")
+            st.pyplot(gantt.make_combined_chart(f"CMS School – Barchant : {floor} – Planned vs Actual",
+                                                combined_rows(rows),
+                                                "Green = concrete work · each block = one day", today=TODAY))
 
         with st.expander("➕ Add / remove an activity"):
-            if not hasattr(db, "add_activity"):
-                st.info("Your `db.py` is the old version – replace it with the new `db.py` and restart the app.")
-            else:
-                st.caption("Add an activity with its planned start and end date. It is placed in date order "
-                           "and you can then enter its actual dates and remarks like the others.")
-                with st.form(f"add_act_{floor}", clear_on_submit=True):
-                    a1, a2, a3 = st.columns([3, 1, 1])
-                    new_name = a1.text_input("Activity name *", key=f"an_{floor}", placeholder="e.g. Flooring")
-                    new_ps = a2.date_input("Planned start", value=end, format="DD/MM/YYYY", key=f"ap_{floor}")
-                    new_pe = a3.date_input("Planned end", value=end, format="DD/MM/YYYY", key=f"ae_{floor}")
-                    new_conc = st.checkbox("This is concrete work (shown in green)", key=f"ac_{floor}")
-                    if st.form_submit_button("Add activity", type="primary"):
-                        if not new_name.strip():
-                            st.error("Enter the activity name.")
-                        elif new_pe < new_ps:
-                            st.error("Planned end cannot be before planned start.")
-                        else:
-                            db.add_activity(floor, new_name, new_ps, new_pe, new_conc or None)
-                            st.success(f"Added: {new_name.strip()}")
-                            st.rerun()
-                opts = {f'{r["seq"]}. {r["name"]}': r["id"] for r in rows}
-                pick = st.selectbox("Remove an activity", ["—"] + list(opts), key=f"rm_{floor}")
-                sure = st.checkbox("Yes, remove it (its actual dates and remarks are deleted too)", key=f"rms_{floor}")
-                if st.button("Remove activity", key=f"rmb_{floor}", disabled=not (sure and pick != "—")):
-                    db.delete_activity(opts[pick])
-                    st.rerun()
+            st.caption("Add an activity with its planned start and end date. It is placed in date order "
+                       "and you can then enter its actual dates and remarks like the others.")
+            with st.form(f"add_act_{floor}", clear_on_submit=True):
+                a1, a2, a3 = st.columns([3, 1, 1])
+                new_name = a1.text_input("Activity name *", key=f"an_{floor}", placeholder="e.g. Flooring")
+                new_ps = a2.date_input("Planned start", value=end, format="DD/MM/YYYY", key=f"ap_{floor}")
+                new_pe = a3.date_input("Planned end", value=end, format="DD/MM/YYYY", key=f"ae_{floor}")
+                new_conc = st.checkbox("This is concrete work (shown in green)", key=f"ac_{floor}")
+                if st.form_submit_button("Add activity", type="primary"):
+                    if not new_name.strip():
+                        st.error("Enter the activity name.")
+                    elif new_pe < new_ps:
+                        st.error("Planned end cannot be before planned start.")
+                    else:
+                        db.add_activity(floor, new_name, new_ps, new_pe, new_conc or None)
+                        st.success(f"Added: {new_name.strip()}")
+                        st.rerun()
+            opts = {f'{r["seq"]}. {r["name"]}': r["id"] for r in rows}
+            pick = st.selectbox("Remove an activity", ["—"] + list(opts), key=f"rm_{floor}")
+            sure = st.checkbox("Yes, remove it (its actual dates and remarks are deleted too)", key=f"rms_{floor}")
+            if st.button("Remove activity", key=f"rmb_{floor}", disabled=not (sure and pick != "—")):
+                db.delete_activity(opts[pick])
+                st.rerun()
 
         with st.expander("⚙️ Change planned floor start date"):
             st.caption("This re-plans the floor: every planned date moves by the same number of days. "
